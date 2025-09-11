@@ -1,0 +1,39 @@
+serve:
+  port: 4000
+  endpoint: /graphql
+  graphiql: true
+  cors: true
+
+cache:
+  name: inmemory-lru
+  options:
+    maxSize: 5000
+    ttl: 60000
+
+sources:
+  - name: Users
+    handler:
+      graphql:
+        endpoint: http://users:4001/graphql
+  - name: Orders
+    handler:
+      graphql:
+        endpoint: http://orders:4002/graphql
+
+additionalTypeDefs: |
+  extend type User {
+    orders: [Order!]!
+  }
+
+additionalResolvers:
+  - targetTypeName: User
+    targetFieldName: orders
+    requiredSelectionSet: |
+      {
+        id
+      }
+    sourceName: Orders
+    sourceTypeName: Query
+    sourceFieldName: ordersByUser
+    sourceArgs:
+      userId: "{root.id}"

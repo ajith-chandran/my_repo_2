@@ -1,0 +1,17 @@
+{
+  "name": "@poc/gateway-mesh",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "npx mesh dev -c mesh.yaml",
+    "start": "NODE_ENV=production npx mesh start -c mesh.yaml"
+  },
+  "dependencies": {
+    "@graphql-mesh/cli": "^0.95.0",
+    "@graphql-mesh/graphql": "^0.95.0",
+    "graphql": "^16.9.0",
+    "pino": "^9.2.0",
+    "dotenv": "^16.4.5"
+  }
+}

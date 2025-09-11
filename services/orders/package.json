@@ -1,0 +1,23 @@
+{
+  "name": "@poc/orders",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "NODE_ENV=development nodemon --watch src --ext js,graphql src/server.js"
+  },
+  "dependencies": {
+    "@apollo/server": "^4.10.0",
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "graphql": "^16.9.0",
+    "http-terminator": "^3.2.0",
+    "pino": "^9.2.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}

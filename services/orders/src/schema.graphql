@@ -1,0 +1,12 @@
+type Order {
+  id: ID!
+  userId: ID!
+  total: Float!
+  status: String!
+}
+
+type Query {
+  order(id: ID!): Order
+  ordersByUser(userId: ID!): [Order!]!
+  orders: [Order!]!
+}

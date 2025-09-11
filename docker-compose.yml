@@ -1,0 +1,28 @@
+version: "3.9"
+services:
+  users:
+    build:
+      context: ./services/users
+    environment:
+      - NODE_ENV=production
+      - PORT=4001
+    ports:
+      - "4001:4001"
+  orders:
+    build:
+      context: ./services/orders
+    environment:
+      - NODE_ENV=production
+      - PORT=4002
+    ports:
+      - "4002:4002"
+  gateway:
+    build:
+      context: ./gateway
+    environment:
+      - NODE_ENV=production
+    ports:
+      - "4000:4000"
+    depends_on:
+      - users
+      - orders
