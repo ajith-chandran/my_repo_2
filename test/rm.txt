@@ -1,0 +1,9 @@
+Trade-offs
+	•	ordersByEmail (Approach 1)
+	•	Good if you want a standalone query.
+	•	Simpler for clients who only need orders.
+	•	Doesn’t require extending the User type.
+	•	user.orders (Approach 2)
+	•	Feels more natural in a federated schema style.
+	•	Great for clients that start with user data and need related entities.
+	•	Keeps data graph connected and composable.
