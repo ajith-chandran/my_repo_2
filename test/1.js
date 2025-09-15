@@ -40,3 +40,20 @@ additionalResolvers:
 
         return orders;
       }
+      
+      
+      
+      
+      ----
+      
+query {
+  getUserByEmail(email: "abc@test.com") {
+    name
+    email
+    orders {
+      id
+      amount
+    }
+  }
+}
+      
