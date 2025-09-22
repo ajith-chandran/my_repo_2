@@ -11,3 +11,10 @@ npx hive schema:publish users \
 
 --commit=$(git rev-parse HEAD)
 --author="$(git log -1 --pretty=format:'%an <%ae>')"
+
+
+curl -X POST http://localhost:3001/graphql \
+  -H "Content-Type: application/json" \
+  -d '{"query":"{ __schema { queryType { name } types { name } } }"}'
+
+
