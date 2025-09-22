@@ -18,3 +18,11 @@ curl -X POST http://localhost:3001/graphql \
   -d '{"query":"{ __schema { queryType { name } types { name } } }"}'
 
 
+
+npx hive schema:check users-schema.graphql \
+  --service users \
+  --url http://localhost:3001/graphql
+
+
+
+
