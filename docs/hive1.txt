@@ -1,0 +1,64 @@
+Main Endpoints in GraphQL Hive
+
+1. Hive Console / UI
+	•	URL: https://app.graphql-hive.com/ (cloud) or http://localhost:8080/ (self-hosted webapp service)
+	•	Who uses it: Humans (developers, admins)
+	•	Purpose: Dashboard UI for managing projects, targets, tokens, schema versions, alerts, usage insights, etc.
+
+⸻
+
+2. Registry API Endpoint
+	•	URL: https://app.graphql-hive.com/graphql (cloud) or http://localhost:8082/graphql (self-hosted server service)
+	•	Who uses it: Hive CLI, CI/CD pipelines, subgraphs publishing schemas
+	•	Purpose:
+	•	Publish subgraph schemas (hive schema:publish)
+	•	Run schema checks (hive schema:check)
+	•	Manage tokens, projects, targets
+	•	Notes: This is the “control plane” API for interacting with Hive programmatically.
+
+⸻
+
+3. Usage Reporting Endpoint
+	•	URL: https://app.graphql-hive.com/usage (cloud) or http://localhost:8081/ (self-hosted usage service)
+	•	Who uses it: Gateways and servers that report operation stats (e.g., Apollo Router, Mesh, custom collectors)
+	•	Purpose:
+	•	Collect field-level usage statistics
+	•	Capture operation timings, error rates, traffic volume
+	•	Notes: Data flows into Kafka → usage-ingestor → ClickHouse for analytics.
+
+⸻
+
+4. CDN Endpoint (Schema/Artifact Delivery)
+	•	URL: https://cdn.graphql-hive.com/<org>/<project>/<target>/cdn (cloud) or http://localhost:8083/ (self-hosted s3_reverse_proxy service)
+	•	Who uses it: Gateways (Apollo Router, GraphQL Mesh, etc.)
+	•	Purpose:
+	•	Fetch the latest supergraph schema (supergraph.graphql)
+	•	Fetch individual subgraph SDLs (schema.graphql)
+	•	Fetch metadata (metadata.json)
+	•	Notes:
+	•	Gateways poll this URL on an interval (configurable).
+	•	You can also pin to a specific schema version if needed.
+	•	This is read-only; no publishing here.
+
+⸻
+
+5. Health/Utility Endpoints (self-host only)
+
+Each service (server, usage, schema, etc.) usually exposes:
+	•	/health — simple health check (used by Docker/Kubernetes probes)
+	•	/metrics — Prometheus-style metrics (if enabled)
+	•	These aren’t used by gateways but are useful in ops/monitoring.
+
+⸻
+
+Summary: Who Uses What?
+	•	Subgraph devs / CI/CD → Registry API (/graphql) for publishing & checks
+	•	Gateways (routers, Mesh, etc.) → CDN URL for fetching supergraph artifacts
+	•	Gateways/servers → Usage reporting endpoint (/usage) for metrics
+	•	Humans → Console UI (/app) for visualization & management
+
+⸻
+
+So if you’re wiring a gateway (like Apollo Router or Mesh) to Hive, you’ll almost always configure two URLs:
+	1.	The CDN URL (for schema fetching)
+	2.	The Usage endpoint (for reporting metrics)
