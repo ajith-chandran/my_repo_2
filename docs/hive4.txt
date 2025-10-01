@@ -1,0 +1,69 @@
+in self-hosted GraphQL Hive, you’ll see a dedicated webhooks service/container.
+
+Here’s what it does and why it exists:
+
+⸻
+
+Purpose of Webhooks in Hive
+
+Webhooks let Hive notify external systems when certain events happen in the registry.
+Instead of polling Hive to check if something changed, Hive can push events to your own services or tools.
+
+⸻
+
+Typical Events Triggered
+
+Some examples of when the webhooks service fires a call:
+	•	Schema publish
+→ When a new schema version is successfully published.
+	•	Schema check results
+→ When a schema check fails (e.g., breaking change detected).
+	•	Breaking change detected
+→ Alert external systems immediately if a breaking schema diff is found.
+	•	Supergraph update
+→ When Hive composes a new supergraph and pushes it to the CDN.
+	•	Target or project changes
+→ New target created, updated, or deleted.
+
+⸻
+
+How It Works
+	1.	You configure a Webhook integration in Hive (through UI or API).
+Example: POST to https://my-ci-service/hooks/hive.
+	2.	Hive stores this config in Postgres.
+	3.	When an event occurs, the webhooks service/container wakes up and sends an HTTP POST payload to your endpoint.
+	4.	Your system can then act on it — e.g.:
+	•	Notify Slack/MS Teams
+	•	Trigger CI/CD job
+	•	Log events for auditing
+
+⸻
+
+Example Payload
+
+A webhook payload might look like this:
+
+{
+  "event": "SCHEMA_CHANGE",
+  "project": "orders-service",
+  "target": "production",
+  "breaking": true,
+  "changes": [
+    {
+      "type": "FIELD_REMOVED",
+      "message": "Field `User.name` was removed from type `User`"
+    }
+  ],
+  "timestamp": "2025-10-01T15:21:00Z"
+}
+
+
+Why a Dedicated Container?
+	•	Hive is microservice-based.
+	•	The webhooks container isolates the responsibility of delivering webhook events.
+	•	This means failures in webhook delivery (like retries, timeouts, external errors) don’t affect core registry or usage ingestion services.
+
+⸻
+
+So in short:
+The webhooks service in Hive is responsible for sending event notifications (schema publishes, breaking changes, checks, etc.) to external endpoints, so your CI/CD, alerting, or monitoring systems can react automatically.
