@@ -1,0 +1,100 @@
+GraphQL Hive doesn’t just “store” schemas, it actively validates and compares them against the previous version in the registry before allowing a new publish. These validations are called Schema Checks.
+
+They fall broadly into two categories:
+	1.	Breaking changes (things that could break existing clients)
+	2.	Safe or non-breaking changes (things that are allowed, sometimes with warnings)
+
+⸻
+
+    Example of a Schema Check (Breaking Change)
+
+Let’s say you already have a schema in Hive:
+
+type User {
+  id: ID!
+  name: String!
+}
+
+And your clients are running queries like:
+
+query {
+  user(id: "1") {
+    id
+    name
+  }
+}
+
+
+Now, you try to publish a new version of the schema:
+
+type User {
+  id: ID!
+}
+
+Here you removed the field name.
+    Hive will compare the new schema to the old one and detect:
+	•	Breaking change: “Field User.name was removed”
+
+It will block this publish (or at least mark it as failing checks), because clients depending on name would break.
+
+
+Example of a Safe Change
+
+Old schema:
+
+type User {
+  id: ID!
+  name: String!
+}
+
+New schema:
+
+type User {
+  id: ID!
+  name: String!
+  email: String
+}
+
+
+Hive will detect:
+	•	Non-breaking change: “Field User.email was added”
+
+This is considered safe, since clients that don’t use email aren’t impacted, and clients that want it can start querying it.
+
+Example of Argument Changes
+
+old:
+
+type Query {
+  user(id: ID!): User
+}
+
+
+new:
+
+type Query {
+  user(id: ID!, includePosts: Boolean!): User
+}
+
+
+Hive check result:
+	•	Breaking change: “A non-null argument includePosts was added to Query.user”
+(Clients that don’t pass this argument will now fail.)
+
+If instead it was added as optional (includePosts: Boolean), Hive would classify it as non-breaking.
+
+⸻
+
+    How Hive Helps
+	•	Hive runs these checks automatically at publish time.
+	•	If breaking changes are detected, it can block the publish or mark it as “failed” so you’re aware.
+	•	Hive can also check usage data (if reporting is enabled):
+e.g. if User.name is unused in production traffic, removing it may be flagged as a “potentially safe breaking change.”
+
+⸻
+
+    So in short:
+Hive is doing schema diffing between the last schema in the registry and the one you’re publishing, then classifying differences as breaking, safe, or warnings.
+
+
+
