@@ -1,0 +1,42 @@
+Hive by default is continuous: when a subgraph publishes a schema, Hive validates it (breaking checks, composition, policy checks), and if it passes, it goes into the registry immediately and can be served to gateways via CDN.
+
+Out of the box, there is no manual “approver/reviewer” step in between publish and registry. Hive is designed for CI/CD-style automation.
+
+⸻
+
+What Hive does give you
+	1.	Schema checks before publish
+	•	Hive validates the new schema against the previous one.
+	•	If breaking changes are detected, it fails the check (publish won’t go through unless forced).
+	•	You can also add policy rules (e.g. field naming conventions, no deprecated scalars).
+	2.	Usage-aware checks
+	•	If a breaking change is proposed but Hive sees that no clients are using the field (from usage metrics), it can downgrade it to a warning.
+	3.	Webhooks & CI integration
+	•	You can configure Hive to send a webhook when a schema check is run.
+	•	That webhook could trigger your CI/CD pipeline to require a human approval step before calling the final publish.
+
+⸻
+
+How to add a Manual Approval Flow
+
+Since Hive itself doesn’t do “reviewer workflows,” you typically implement this pattern:
+	1.	Subgraph developer submits schema (in CI)
+	•	Run hive schema:check against Hive.
+	•	Hive reports whether changes are safe, breaking, or violating policies.
+	2.	CI pipeline gates the publish
+	•	If the check passes, the pipeline waits for manual approval (e.g. GitHub Actions workflow_dispatch, GitLab manual job, Jenkins input step).
+	3.	After approval, CI publishes
+	•	Run hive schema:publish to actually store the schema in Hive.
+	•	Now Hive will push artifacts to CDN, and gateways can pick them up.
+
+⸻
+
+Alternatives
+	•	Strict mode: You can configure Hive so that no breaking schema is ever accepted. This way, reviewers only have to care about functional approval, not compatibility.
+	•	Environment separation: Publish new schemas to a staging target in Hive, review/test there, then promote them to production target after approval.
+
+⸻
+
+So short answer:
+	•	Hive itself does not have a built-in manual approval workflow.
+	•	You implement approvals in your CI/CD pipeline, using Hive’s schema check results + webhooks to control when a publish actually happens.
