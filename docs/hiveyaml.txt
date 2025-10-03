@@ -1,0 +1,424 @@
+version: '3.8'  # Docker Compose file format version (3.8 = modern features, networks, healthchecks)
+name: 'hive'  # Project name used by Docker Compose; groups all services under 'hive' for networking
+
+networks:  # Define custom network(s) so all Hive services can talk to each other securely
+  stack:
+    name: hive  # Project name used by Docker Compose; groups all services under 'hive' for networking
+
+services:  # All containers that make up the Hive on-premise stack
+  db:
+    image: postgres:16.4-alpine
+    environment:
+      POSTGRES_DB: '${POSTGRES_DB}'  # Database name used by Hive for persistence (schemas, tokens, accounts)
+      POSTGRES_USER: '${POSTGRES_USER}'  # Database username Hive services use to connect
+      POSTGRES_PASSWORD: '${POSTGRES_PASSWORD}'  # Database password Hive services use to connect
+      PGDATA: /var/lib/postgresql/data  # Path inside container where Postgres stores its data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}']  # Database name used by Hive for persistence (schemas, tokens, accounts)
+      interval: 5s
+      timeout: 5s
+      retries: 6
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    volumes:
+      - ./.hive/postgres:/var/lib/postgresql/data
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://0.0.0.0:8123/ping']
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    environment:
+      CLICKHOUSE_USER: '${CLICKHOUSE_USER}'  # Username for ClickHouse authentication, used by Hive usage-ingestor and server
+      CLICKHOUSE_PASSWORD: '${CLICKHOUSE_PASSWORD}'  # Password for ClickHouse, ensuring secure connections from Hive services
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    volumes:
+      - ./.hive/clickhouse/db:/var/lib/clickhouse
+
+  broker:
+    image: redpandadata/redpanda:v23.3.21
+    hostname: broker
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    ports:
+      - '0.0.0.0:9092:9092'
+      - '0.0.0.0:9644:9644'
+    command:
+      - redpanda
+      - start
+      - --smp
+      - '1'
+      - --set redpanda.empty_seed_starts_cluster=false
+      - --seeds "redpanda-1:33145"
+      - --kafka-addr  # Configures Kafka listener addresses for inside/outside cluster
+      - PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr  # Advertised Kafka addresses for clients (Hive usage service connects here)
+      - PLAINTEXT://broker:29092,OUTSIDE://localhost:9092
+      - --pandaproxy-addr  # Expose Pandaproxy (REST proxy for Kafka)
+      - PLAINTEXT://0.0.0.0:27082,OUTSIDE://0.0.0.0:7082
+      - --advertise-pandaproxy-addr
+      - PLAINTEXT://broker:27082,OUTSIDE://localhost:7082
+      - --advertise-rpc-addr redpanda-1:33145
+    mem_limit: 300m
+    mem_reservation: 100m
+    healthcheck:
+      test: 'curl -f http://localhost:9644/public_metrics'
+      interval: 3s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+    volumes:
+      - ./.hive/broker/db:/var/lib/redpanda/data
+
+  redis:
+    image: bitnamilegacy/redis:7.4.2
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 10s
+      retries: 6
+      start_period: 5s
+    environment:
+      REDIS_PASSWORD: '${REDIS_PASSWORD}'  # Redis password used by Hive services to securely connect
+      REDIS_DISABLE_COMMANDS: 'FLUSHDB,FLUSHALL'  # Disable dangerous Redis commands (e.g., FLUSHALL) to protect Hive state
+    volumes:
+      - './.hive/redis/db:/bitnami/redis/data'
+
+  supertokens:
+    image: registry.supertokens.io/supertokens/supertokens-postgresql:9.3
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    environment:
+      POSTGRESQL_USER: '${POSTGRES_USER}'  # Database username Hive services use to connect
+      POSTGRESQL_PASSWORD: '${POSTGRES_PASSWORD}'  # Database password Hive services use to connect
+      POSTGRESQL_DATABASE_NAME: '${POSTGRES_DB}'  # Database name used by Hive for persistence (schemas, tokens, accounts)
+      POSTGRESQL_TABLE_NAMES_PREFIX: 'supertokens'  # Prefix for Supertokens DB tables (avoids conflicts with Hive DB tables)
+      POSTGRESQL_HOST: db
+      POSTGRESQL_PORT: 5432
+      API_KEYS: '${SUPERTOKENS_API_KEY}'  # API key Hive server uses to authenticate against Supertokens
+
+  s3:
+    image: quay.io/minio/minio:RELEASE.2022-11-29T23-40-49Z
+    command: server /data --console-address ":9001"
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}  # Root access key for MinIO; Hive uses this to authenticate with S3 storage
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}  # Root secret key for MinIO
+    volumes:
+      - './.hive/minio/db:/data'
+
+  s3_provision_buckets:
+    image: quay.io/minio/mc:RELEASE.2022-11-17T21-20-39Z
+    depends_on:
+      s3:
+        condition: service_healthy
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    entrypoint: >
+      /bin/sh -c " /usr/bin/mc alias set myminio http://s3:9000 ${MINIO_ROOT_USER}  # Root access key for MinIO; Hive uses this to authenticate with S3 storage
+      ${MINIO_ROOT_PASSWORD}; /usr/bin/mc ls myminio/artifacts >/dev/null 2>&1 || /usr/bin/mc mb  # Root secret key for MinIO
+      myminio/artifacts; /usr/bin/mc ls myminio/audit-logs >/dev/null 2>&1 || /usr/bin/mc mb
+      myminio/audit-logs; exit 0"
+
+  s3_reverse_proxy:
+    image: caddy:2.9.1-alpine
+    depends_on:
+      s3:
+        condition: service_healthy
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    ports:
+      - '8083:8083'
+    command: caddy reverse-proxy --from :8083 --to s3:9000 --change-host-header
+
+  migrations:
+    image: '${DOCKER_REGISTRY}storage${DOCKER_TAG}'
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    environment:
+      MIGRATOR: 'up'  # Runs Postgres migrations (up = apply all migrations)
+      CLICKHOUSE_MIGRATOR: 'up'  # Runs Postgres migrations (up = apply all migrations)
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: '${POSTGRES_DB}'  # Database name used by Hive for persistence (schemas, tokens, accounts)
+      POSTGRES_USER: '${POSTGRES_USER}'  # Database username Hive services use to connect
+      POSTGRES_PASSWORD: '${POSTGRES_PASSWORD}'  # Database password Hive services use to connect
+      CLICKHOUSE_PROTOCOL: 'http'
+      CLICKHOUSE_HOST: 'clickhouse'
+      CLICKHOUSE_PORT: '8123'
+      CLICKHOUSE_USERNAME: '${CLICKHOUSE_USER}'  # Username for ClickHouse authentication, used by Hive usage-ingestor and server
+      CLICKHOUSE_PASSWORD: '${CLICKHOUSE_PASSWORD}'  # Password for ClickHouse, ensuring secure connections from Hive services
+      TS_NODE_TRANSPILE_ONLY: 'true'
+      LOG_LEVEL: '${LOG_LEVEL:-debug}'
+
+  server:
+    image: '${DOCKER_REGISTRY}server${DOCKER_TAG}'
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+      s3_provision_buckets:
+        condition: service_completed_successfully
+      tokens:
+        condition: service_healthy
+      webhooks:
+        condition: service_healthy
+      emails:
+        condition: service_healthy
+      schema:
+        condition: service_healthy
+      policy:
+        condition: service_healthy
+    ports:
+      - '8082:3001'
+    environment:
+      NODE_ENV: production  # Run in production mode (optimizations enabled)
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: '${POSTGRES_DB}'  # Database name used by Hive for persistence (schemas, tokens, accounts)
+      POSTGRES_USER: '${POSTGRES_USER}'  # Database username Hive services use to connect
+      POSTGRES_PASSWORD: '${POSTGRES_PASSWORD}'  # Database password Hive services use to connect
+      CLICKHOUSE_PROTOCOL: 'http'
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_USERNAME: '${CLICKHOUSE_USER}'  # Username for ClickHouse authentication, used by Hive usage-ingestor and server
+      CLICKHOUSE_PASSWORD: '${CLICKHOUSE_PASSWORD}'  # Password for ClickHouse, ensuring secure connections from Hive services
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: '${REDIS_PASSWORD}'  # Redis password used by Hive services to securely connect
+      TOKENS_ENDPOINT: http://tokens:3003  # Internal endpoint for token validation (auth service)
+      WEBHOOKS_ENDPOINT: http://webhooks:3005  # Internal endpoint for webhook delivery service
+      SCHEMA_ENDPOINT: http://schema:3002  # Internal endpoint for schema registry service
+      SCHEMA_POLICY_ENDPOINT: http://policy:3012  # Internal endpoint for schema policy (governance rules)
+      EMAILS_ENDPOINT: http://emails:3011  # Internal endpoint for email notifications service
+      ENCRYPTION_SECRET: '${HIVE_ENCRYPTION_SECRET}'  # Secret key for encrypting sensitive Hive data (e.g., API keys)
+      WEB_APP_URL: '${HIVE_APP_BASE_URL}'  # Base URL for Hive web console, used in links/emails
+      PORT: 3001
+      S3_ENDPOINT: 'http://s3:9000'
+      S3_ACCESS_KEY_ID: ${MINIO_ROOT_USER}  # Root access key for MinIO; Hive uses this to authenticate with S3 storage
+      S3_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}  # Root secret key for MinIO
+      S3_BUCKET_NAME: artifacts  # MinIO bucket where Hive stores schema artifacts
+      S3_AUDIT_LOG_ENDPOINT: 'http://s3:9000'
+      S3_AUDIT_LOG_ACCESS_KEY_ID: ${MINIO_ROOT_USER}  # Root access key for MinIO; Hive uses this to authenticate with S3 storage
+      S3_AUDIT_LOG_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}  # Root secret key for MinIO
+      S3_AUDIT_LOG_BUCKET_NAME: audit-logs  # MinIO bucket where Hive stores schema change audit logs
+      CDN_AUTH_PRIVATE_KEY: ${CDN_AUTH_PRIVATE_KEY}  # Private key used for signing CDN access tokens (artifact delivery)
+      CDN_API: '1'
+      CDN_API_BASE_URL: 'http://localhost:8082'
+      LOG_LEVEL: '${LOG_LEVEL:-debug}'
+      # Auth
+      AUTH_ORGANIZATION_OIDC: '1'
+      AUTH_REQUIRE_EMAIL_VERIFICATION: '0'
+      SUPERTOKENS_CONNECTION_URI: http://supertokens:3567
+      SUPERTOKENS_API_KEY: '${SUPERTOKENS_API_KEY}'
+      GRAPHQL_PUBLIC_ORIGIN: http://localhost:8082  # Public URL of Hive GraphQL API (used by Mesh clients)
+      # Tracing
+      OPENTELEMETRY_COLLECTOR_ENDPOINT: '${OPENTELEMETRY_COLLECTOR_ENDPOINT:-}'
+      SENTRY: '${SENTRY:-0}'
+      SENTRY_DSN: '${SENTRY_DSN:-}'
+      PROMETHEUS_METRICS: '${PROMETHEUS_METRICS:-}'
+
+  policy:
+    image: '${DOCKER_REGISTRY}policy${DOCKER_TAG}'
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    environment:
+      NODE_ENV: production  # Run in production mode (optimizations enabled)
+      PORT: 3012
+      LOG_LEVEL: '${LOG_LEVEL:-debug}'
+      OPENTELEMETRY_COLLECTOR_ENDPOINT: '${OPENTELEMETRY_COLLECTOR_ENDPOINT:-}'
+      SENTRY: '${SENTRY:-0}'
+      SENTRY_DSN: '${SENTRY_DSN:-}'
+      PROMETHEUS_METRICS: '${PROMETHEUS_METRICS:-}'
+
+  schema:
+    image: '${DOCKER_REGISTRY}schema${DOCKER_TAG}'
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production  # Run in production mode (optimizations enabled)
+      PORT: 3002
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: '${REDIS_PASSWORD}'  # Redis password used by Hive services to securely connect
+      ENCRYPTION_SECRET: '${HIVE_ENCRYPTION_SECRET}'  # Secret key for encrypting sensitive Hive data (e.g., API keys)
+      OPENTELEMETRY_COLLECTOR_ENDPOINT: '${OPENTELEMETRY_COLLECTOR_ENDPOINT:-}'
+      SENTRY: '${SENTRY:-0}'
+      SENTRY_DSN: '${SENTRY_DSN:-}'
+      PROMETHEUS_METRICS: '${PROMETHEUS_METRICS:-}'
+      LOG_LEVEL: '${LOG_LEVEL:-debug}'
+
+  tokens:
+    image: '${DOCKER_REGISTRY}tokens${DOCKER_TAG}'
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production  # Run in production mode (optimizations enabled)
+      POSTGRES_HOST: db
+      POSTGRES_USER: '${POSTGRES_USER}'  # Database username Hive services use to connect
+      POSTGRES_PASSWORD: '${POSTGRES_PASSWORD}'  # Database password Hive services use to connect
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: '${POSTGRES_DB}'  # Database name used by Hive for persistence (schemas, tokens, accounts)
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: '${REDIS_PASSWORD}'  # Redis password used by Hive services to securely connect
+      PORT: 3003
+      LOG_LEVEL: '${LOG_LEVEL:-debug}'
+      OPENTELEMETRY_COLLECTOR_ENDPOINT: '${OPENTELEMETRY_COLLECTOR_ENDPOINT:-}'
+      SENTRY: '${SENTRY:-0}'
+      SENTRY_DSN: '${SENTRY_DSN:-}'
+      PROMETHEUS_METRICS: '${PROMETHEUS_METRICS:-}'
+
+  webhooks:
+    image: '${DOCKER_REGISTRY}webhooks${DOCKER_TAG}'
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production  # Run in production mode (optimizations enabled)
+      PORT: 3005
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: '${REDIS_PASSWORD}'  # Redis password used by Hive services to securely connect
+      LOG_LEVEL: '${LOG_LEVEL:-debug}'
+      OPENTELEMETRY_COLLECTOR_ENDPOINT: '${OPENTELEMETRY_COLLECTOR_ENDPOINT:-}'
+      SENTRY: '${SENTRY:-0}'
+      SENTRY_DSN: '${SENTRY_DSN:-}'
+      PROMETHEUS_METRICS: '${PROMETHEUS_METRICS:-}'
+
+  emails:
+    image: '${DOCKER_REGISTRY}emails${DOCKER_TAG}'
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production  # Run in production mode (optimizations enabled)
+      PORT: 3011
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: '${REDIS_PASSWORD}'  # Redis password used by Hive services to securely connect
+      EMAIL_FROM: no-reply@graphql-hive.com
+      EMAIL_PROVIDER: sendmail
+      LOG_LEVEL: '${LOG_LEVEL:-debug}'
+      OPENTELEMETRY_COLLECTOR_ENDPOINT: '${OPENTELEMETRY_COLLECTOR_ENDPOINT:-}'
+      SENTRY: '${SENTRY:-0}'
+      SENTRY_DSN: '${SENTRY_DSN:-}'
+      PROMETHEUS_METRICS: '${PROMETHEUS_METRICS:-}'
+
+  usage:
+    image: '${DOCKER_REGISTRY}usage${DOCKER_TAG}'
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    depends_on:
+      broker:
+        condition: service_healthy
+      tokens:
+        condition: service_healthy
+    ports:
+      - 8081:3006
+    environment:
+      NODE_ENV: production  # Run in production mode (optimizations enabled)
+      TOKENS_ENDPOINT: http://tokens:3003  # Internal endpoint for token validation (auth service)
+      KAFKA_CONNECTION_MODE: 'docker'
+      KAFKA_TOPIC: 'usage_reports_v2'  # Kafka topic name where Hive usage service pushes usage reports
+      KAFKA_BROKER: broker:29092
+      KAFKA_BUFFER_SIZE: 350
+      KAFKA_BUFFER_INTERVAL: 1000
+      KAFKA_BUFFER_DYNAMIC: '1'
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: '${POSTGRES_DB}'  # Database name used by Hive for persistence (schemas, tokens, accounts)
+      POSTGRES_USER: '${POSTGRES_USER}'  # Database username Hive services use to connect
+      POSTGRES_PASSWORD: '${POSTGRES_PASSWORD}'  # Database password Hive services use to connect
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: '${REDIS_PASSWORD}'  # Redis password used by Hive services to securely connect
+      PORT: 3006
+      LOG_LEVEL: '${LOG_LEVEL:-debug}'
+      SENTRY: '${SENTRY:-0}'
+      SENTRY_DSN: '${SENTRY_DSN:-}'
+      PROMETHEUS_METRICS: '${PROMETHEUS_METRICS:-}'
+
+  usage-ingestor:
+    image: '${DOCKER_REGISTRY}usage-ingestor${DOCKER_TAG}'
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    depends_on:
+      broker:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production  # Run in production mode (optimizations enabled)
+      KAFKA_CONNECTION_MODE: 'docker'
+      KAFKA_BROKER: broker:29092
+      KAFKA_CONCURRENCY: '1'
+      KAFKA_CONSUMER_GROUP: 'usage-ingestor-v2'
+      KAFKA_TOPIC: 'usage_reports_v2'  # Kafka topic name where Hive usage service pushes usage reports
+      CLICKHOUSE_PROTOCOL: 'http'
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      CLICKHOUSE_USERNAME: '${CLICKHOUSE_USER}'  # Username for ClickHouse authentication, used by Hive usage-ingestor and server
+      CLICKHOUSE_PASSWORD: '${CLICKHOUSE_PASSWORD}'  # Password for ClickHouse, ensuring secure connections from Hive services
+      PORT: 3007
+      LOG_LEVEL: '${LOG_LEVEL:-debug}'
+      SENTRY: '${SENTRY:-0}'
+      SENTRY_DSN: '${SENTRY_DSN:-}'
+      PROMETHEUS_METRICS: '${PROMETHEUS_METRICS:-}'
+
+  app:
+    image: '${DOCKER_REGISTRY}app${DOCKER_TAG}'
+    ports:
+      - '8080:3000'
+    networks:  # Define custom network(s) so all Hive services can talk to each other securely
+      - 'stack'
+    environment:
+      PORT: 3000
+      NODE_ENV: production  # Run in production mode (optimizations enabled)
+      APP_BASE_URL: '${HIVE_APP_BASE_URL}'  # Base URL of the Hive Console, passed into frontend config
+      GRAPHQL_PUBLIC_ENDPOINT: http://localhost:8082/graphql  # Public GraphQL endpoint URL the UI calls
+      GRAPHQL_PUBLIC_SUBSCRIPTION_ENDPOINT: http://localhost:8082/graphql  # Public GraphQL subscription endpoint URL (for real-time updates)
+      GRAPHQL_PUBLIC_ORIGIN: http://localhost:8082  # Public URL of Hive GraphQL API (used by Mesh clients)
+      AUTH_REQUIRE_EMAIL_VERIFICATION: '0'
+      AUTH_ORGANIZATION_OIDC: '1'
+      LOG_LEVEL: '${LOG_LEVEL:-debug}'
+      SENTRY: '${SENTRY:-0}'
+      SENTRY_DSN: '${SENTRY_DSN:-}'
