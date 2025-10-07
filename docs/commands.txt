@@ -1,0 +1,1 @@
+npx @graphql-inspector/cli validate schema.graphql response.json
