@@ -2,3 +2,12 @@ npx graphql-codegen \
   --schema schema.json \
   --plugin schema-ast \
   --config '{"generates": {"schema.graphql": {"plugins":["schema-ast"]}}}'
+
+
+schema: introspection.json
+generates:
+  schema.graphql:
+    plugins:
+      - schema-ast
+
+
