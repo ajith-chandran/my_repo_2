@@ -1,0 +1,16 @@
+@PostMapping("/graphql")
+public ResponseEntity<Object> graphql(@RequestBody Map<String, Object> request) {
+    String query = (String) request.get("query");
+    String operationName = (String) request.get("operationName");
+    Map<String, Object> variables = (Map<String, Object>) request.getOrDefault("variables", Map.of());
+
+    ExecutionInput executionInput = ExecutionInput.newExecutionInput()
+            .query(query)
+            .operationName(operationName)
+            .variables(variables)
+            .build();
+
+    ExecutionResult result = graphQL.execute(executionInput);
+
+    return ResponseEntity.ok(result.toSpecification());
+}
