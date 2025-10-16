@@ -324,10 +324,16 @@ public void loadSchema() {
 ===
 
 {
-  "representations": [{ "__typename": "User", "id": "u1" }]
+  "query": "query($representations:[_Any!]!){_entities(representations:$representations){... on User { id orders { id product } }}}",
+  "variables": {
+    "representations": [
+      {
+        "__typename": "User",
+        "id": "u1"
+      }
+    ]
+  }
 }
-
-
 
 
 
