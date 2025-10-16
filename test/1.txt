@@ -1,0 +1,203 @@
+# Federation directives
+directive @key(fields: String!) repeatable on OBJECT | INTERFACE
+directive @external on FIELD_DEFINITION
+directive @extends on OBJECT | INTERFACE
+
+type Order {
+  id: ID!
+  product: String!
+  userId: ID!
+}
+
+type Query {
+  getOrders(criteria: String!): [Order]
+}
+
+# Extend User type for federation
+extend type User @key(fields: "id") {
+  id: ID! @external
+  orders: [Order]
+}
+
+
+-----
+
+
+package com.example.orders.federation;
+
+import java.util.Map;
+
+public interface EntityResolver {
+    boolean supports(String typeName);
+    Object resolve(Map<String, Object> reference);
+}
+
+
+-----
+
+package com.example.orders.federation;
+
+import org.springframework.stereotype.Component;
+import java.util.List;
+import java.util.Map;
+
+@Component
+public class EntityResolverRegistry {
+    private final List<EntityResolver> resolvers;
+
+    public EntityResolverRegistry(List<EntityResolver> resolvers) {
+        this.resolvers = resolvers;
+    }
+
+    public Object resolveEntity(Map<String, Object> reference) {
+        String typeName = (String) reference.get("__typename");
+        return resolvers.stream()
+                .filter(r -> r.supports(typeName))
+                .findFirst()
+                .map(r -> r.resolve(reference))
+                .orElse(null);
+    }
+}
+
+
+---
+
+
+package com.example.orders.federation;
+
+import com.example.orders.model.User;
+import org.springframework.stereotype.Component;
+import java.util.Map;
+
+@Component
+public class UserEntityResolver implements EntityResolver {
+
+    @Override
+    public boolean supports(String typeName) {
+        return "User".equals(typeName);
+    }
+
+    @Override
+    public Object resolve(Map<String, Object> reference) {
+        String id = (String) reference.get("id");
+        return new User(id);
+    }
+}
+
+
+---
+
+
+package com.example.orders.fetchers;
+
+import graphql.schema.DataFetcher;
+import graphql.schema.DataFetchingEnvironment;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+import com.example.orders.service.OrderService;
+import com.example.orders.model.Order;
+import java.util.List;
+import java.util.Map;
+
+@Component
+public class UserOrdersDataFetcher implements DataFetcher<List<Order>> {
+
+    @Autowired
+    private OrderService orderService;
+
+    @Override
+    public List<Order> get(DataFetchingEnvironment env) {
+        Map<String, Object> user = env.getSource();
+        String userId = (String) user.get("id");
+        return orderService.getOrders("accountNumber:" + userId);
+    }
+}
+
+
+
+----
+
+
+package com.example.orders;
+
+import com.apollographql.federation.graphqljava.Federation;
+import com.example.orders.federation.EntityResolverRegistry;
+import com.example.orders.fetchers.*;
+import graphql.GraphQL;
+import graphql.schema.GraphQLSchema;
+import graphql.schema.idl.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import javax.annotation.PostConstruct;
+import java.io.File;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+@Service
+public class GraphQLServiceImplementation {
+
+    @Autowired private OrderListDataFetcher orderListDataFetcher;
+    @Autowired private OrderDataFetcher orderDataFetcher;
+    @Autowired private OrderCountDataFetcher orderCountDataFetcher;
+    @Autowired private CustomerDataFetcher customerDataFetcher;
+    @Autowired private OrderLookUpDataFetcher orderLookUpDataFetcher;
+    @Autowired private UserOrdersDataFetcher userOrdersDataFetcher;
+    @Autowired private EntityResolverRegistry entityRegistry;
+
+    private GraphQL graphQL;
+
+    @PostConstruct
+    public void loadSchema() throws Exception {
+        File schemaFile = new File("src/main/resources/graphql/order.graphqls");
+        TypeDefinitionRegistry typeRegistry = new SchemaParser().parse(schemaFile);
+        RuntimeWiring runtimeWiring = buildRuntimeWiring();
+
+        GraphQLSchema schema = Federation.transform(typeRegistry, runtimeWiring)
+            .fetchEntities(env -> {
+                List<Map<String, Object>> reps = env.getArgument("representations");
+                return reps.stream()
+                        .map(entityRegistry::resolveEntity)
+                        .collect(Collectors.toList());
+            })
+            .resolveEntityType(env -> {
+                Object src = env.getObject();
+                if (src == null) return null;
+                String typeName = src.getClass().getSimpleName();
+                return env.getSchema().getObjectType(typeName);
+            })
+            .build();
+
+        graphQL = GraphQL.newGraphQL(schema).build();
+    }
+
+    private RuntimeWiring buildRuntimeWiring() {
+        return RuntimeWiring.newRuntimeWiring()
+            .type("Query", builder -> builder
+                .dataFetcher("getOrders", orderListDataFetcher)
+                .dataFetcher("getOrderData", orderDataFetcher)
+                .dataFetcher("countOrders", orderCountDataFetcher)
+                .dataFetcher("getCustomerByAccount", customerDataFetcher)
+                .dataFetcher("orderLookup", orderLookUpDataFetcher)
+            )
+            .type("User", builder -> builder
+                .dataFetcher("orders", userOrdersDataFetcher)
+            )
+            .build();
+    }
+
+    public GraphQL getGraphQL() { return graphQL; }
+}
+
+
+----
+
+
+package com.example.orders.model;
+
+public class User {
+    private String id;
+    public User(String id) { this.id = id; }
+    public String getId() { return id; }
+}
