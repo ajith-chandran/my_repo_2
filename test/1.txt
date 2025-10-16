@@ -230,3 +230,24 @@ public class User {
     public User(String id) { this.id = id; }
     public String getId() { return id; }
 }
+
+
+----
+
+
+
+public class FederationDirectives {
+    public static void registerFederationDirectives(TypeDefinitionRegistry registry) {
+        String federationSDL = """
+            directive @key(fields: String!) repeatable on OBJECT | INTERFACE
+            directive @external on FIELD_DEFINITION
+            directive @requires(fields: String!) on FIELD_DEFINITION
+            directive @provides(fields: String!) on FIELD_DEFINITION
+            directive @extends on OBJECT | INTERFACE
+        """;
+        TypeDefinitionRegistry federationRegistry = new SchemaParser().parse(federationSDL);
+        registry.merge(federationRegistry);
+    }
+}
+
+
