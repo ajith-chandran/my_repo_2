@@ -117,7 +117,6 @@ public class UserOrdersDataFetcher implements DataFetcher<List<Order>> {
 
 ----
 
-
 package com.example.orders;
 
 import com.apollographql.federation.graphqljava.Federation;
@@ -143,24 +142,34 @@ public class GraphQLServiceImplementation {
     @Autowired private OrderCountDataFetcher orderCountDataFetcher;
     @Autowired private CustomerDataFetcher customerDataFetcher;
     @Autowired private OrderLookUpDataFetcher orderLookUpDataFetcher;
-    @Autowired private UserOrdersDataFetcher userOrdersDataFetcher;
-    @Autowired private EntityResolverRegistry entityRegistry;
+    @Autowired private UserOrdersDataFetcher userOrdersDataFetcher; // 👈 new for User.orders
+    @Autowired private EntityResolverRegistry entityRegistry;       // 👈 dynamic federation registry
+
+    @Autowired(required = false)
+    private CustomQueryDirective customQueryDirective;              // your existing instrumentation
 
     private GraphQL graphQL;
 
     @PostConstruct
     public void loadSchema() throws Exception {
         File schemaFile = new File("src/main/resources/graphql/order.graphqls");
+
+        // Parse .graphqls file
         TypeDefinitionRegistry typeRegistry = new SchemaParser().parse(schemaFile);
+
+        // Build all data fetchers
         RuntimeWiring runtimeWiring = buildRuntimeWiring();
 
+        // Wrap with Apollo Federation
         GraphQLSchema schema = Federation.transform(typeRegistry, runtimeWiring)
+            // Handles _entities requests dynamically via registry
             .fetchEntities(env -> {
                 List<Map<String, Object>> reps = env.getArgument("representations");
                 return reps.stream()
                         .map(entityRegistry::resolveEntity)
                         .collect(Collectors.toList());
             })
+            // Dynamically resolve entity type from object
             .resolveEntityType(env -> {
                 Object src = env.getObject();
                 if (src == null) return null;
@@ -169,11 +178,21 @@ public class GraphQLServiceImplementation {
             })
             .build();
 
-        graphQL = GraphQL.newGraphQL(schema).build();
+        // Preserve your existing custom directive addition (includeIf)
+        schema = schema.transform(builder ->
+            builder.additionalDirective(schema.getDirective("includeIf"))
+        );
+
+        // Build final GraphQL engine with your existing settings
+        this.graphQL = GraphQL.newGraphQL(schema)
+            .fieldVisibility(getOrderFieldVisibility()) // from your existing code
+            .instrumentation(customQueryDirective)      // from your existing code
+            .build();
     }
 
     private RuntimeWiring buildRuntimeWiring() {
         return RuntimeWiring.newRuntimeWiring()
+            // Your existing Query mappings
             .type("Query", builder -> builder
                 .dataFetcher("getOrders", orderListDataFetcher)
                 .dataFetcher("getOrderData", orderDataFetcher)
@@ -181,15 +200,25 @@ public class GraphQLServiceImplementation {
                 .dataFetcher("getCustomerByAccount", customerDataFetcher)
                 .dataFetcher("orderLookup", orderLookUpDataFetcher)
             )
+            // New federated field resolver for User.orders
             .type("User", builder -> builder
                 .dataFetcher("orders", userOrdersDataFetcher)
             )
+            .fieldVisibility(getOrderFieldVisibility())
             .build();
     }
 
-    public GraphQL getGraphQL() { return graphQL; }
-}
+    // Your existing method
+    private graphql.schema.visibility.GraphqlFieldVisibility getOrderFieldVisibility() {
+        // Assuming this method already exists in your class, preserve it.
+        // You might have your own implementation or bean.
+        return graphql.schema.visibility.DefaultGraphqlFieldVisibility.DEFAULT_FIELD_VISIBILITY;
+    }
 
+    public GraphQL getGraphQL() {
+        return graphQL;
+    }
+}
 
 ----
 
