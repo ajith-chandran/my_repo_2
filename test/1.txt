@@ -277,3 +277,44 @@ public class FederationConfig {
                 .build();
     }
 }
+
+
+----
+
+
+@PostConstruct
+public void loadSchema() {
+    TypeDefinitionRegistry typeRegistry = new SchemaParser().parse(new File(graphQLPath));
+
+    RuntimeWiring runtimeWiring = buildRuntimeWiring();
+
+    // Wrap with Apollo Federation
+    GraphQLSchema schema = Federation.transform(typeRegistry, runtimeWiring)
+            // Handles _entities requests dynamically
+            .fetchEntities(env -> {
+                List<Map<String, Object>> representations = env.getArgument("representations");
+
+                return representations.stream()
+                        .map(repr -> {
+                            String typename = (String) repr.get("__typename");
+                            if ("User".equals(typename)) {
+                                return new User((String) repr.get("id"));
+                            }
+                            return null;
+                        })
+                        .collect(Collectors.toList());
+            })
+            .resolveEntityType(env -> {
+                Object src = env.getObject();
+                if (src instanceof User) {
+                    return env.getSchema().getObjectType("User");
+                }
+                return null;
+            })
+            .build();
+
+    // Add custom directives if needed
+    GraphQLSchema finalSchema = schema_transform(builder -> {
+        builder.additionalDirective(finalSchema.getDirective("includeIf"));
+    });
+}
