@@ -250,4 +250,30 @@ public class FederationDirectives {
     }
 }
 
+---
 
+
+@Configuration
+public class FederationConfig {
+
+    @Bean
+    public GraphQLSchema federatedSchema(GraphQLSchema originalSchema) {
+        return Federation.transform(originalSchema)
+                .fetchEntities(env -> env.getRepresentations().stream()
+                        .map(repr -> {
+                            if ("User".equals(repr.get("__typename"))) {
+                                return new User((String) repr.get("id"));
+                            }
+                            return null;
+                        })
+                        .toList())
+                .resolveEntityType(env -> {
+                    Object src = env.getObject();
+                    if (src instanceof User) {
+                        return env.getSchema().getObjectType("User");
+                    }
+                    return null;
+                })
+                .build();
+    }
+}
