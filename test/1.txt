@@ -1,4 +1,4 @@
-# Federation directives
+	# Federation directives
 directive @key(fields: String!) repeatable on OBJECT | INTERFACE
 directive @external on FIELD_DEFINITION
 directive @extends on OBJECT | INTERFACE
@@ -318,3 +318,16 @@ public void loadSchema() {
         builder.additionalDirective(finalSchema.getDirective("includeIf"));
     });
 }
+
+
+
+===
+
+{
+  "representations": [{ "__typename": "User", "id": "u1" }]
+}
+
+
+
+
+
