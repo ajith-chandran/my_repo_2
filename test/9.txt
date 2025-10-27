@@ -89,3 +89,162 @@ public class GraphQLConfig {
     }
 }
 
+
+=====
+
+package com.example.graphql;
+
+import com.google.gson.Gson;
+import graphql.language.*;
+import graphql.schema.DataFetcher;
+import org.springframework.graphql.execution.DataFetcherDecorationEnvironment;
+import org.springframework.graphql.execution.DataFetcherDecorator;
+import org.springframework.stereotype.Component;
+
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Component
+public class IncludeIfDataFetcherDecorator implements DataFetcherDecorator {
+
+    private final Gson gson = new Gson();
+
+    @Override
+    public DataFetcher<?> decorate(DataFetcher<?> originalFetcher,
+                                   DataFetcherDecorationEnvironment env) {
+
+        return dataEnv -> {
+            Object result = originalFetcher.get(dataEnv);
+
+            // Look for the @includeIf directive from the query AST
+            Directive includeIfDirective = dataEnv.getField().getDirectives().stream()
+                    .filter(d -> "includeIf".equals(d.getName()))
+                    .findFirst()
+                    .orElse(null);
+
+            if (includeIfDirective == null) {
+                return result;
+            }
+
+            String fieldName = dataEnv.getFieldDefinition().getName();
+
+            // ============================
+            // FILTER PRODUCTS
+            // ============================
+            if ("products".equals(fieldName)) {
+                Argument arg = getArgument(includeIfDirective, "product");
+                if (arg != null && arg.getValue() != null) {
+                    Object argVal = astValueToPojo(arg.getValue());
+                    ProductFilter productFilter =
+                            gson.fromJson(gson.toJson(argVal), ProductFilter.class);
+
+                    if (result instanceof List<?>) {
+                        List<Product> products = ((List<?>) result).stream()
+                                .filter(Product.class::isInstance)
+                                .map(Product.class::cast)
+                                .filter(p -> p.getLineOfBusiness() != null)
+                                .filter(p -> {
+                                    List<String> filterLOBs = productFilter.getLineOfBusiness()
+                                            .stream().map(String::toLowerCase).toList();
+                                    return filterLOBs.contains(p.getLineOfBusiness().toLowerCase());
+                                })
+                                .collect(Collectors.toList());
+                        result = products;
+                    }
+                }
+            }
+
+            // ============================
+            // FILTER ITEMS
+            // ============================
+            if ("items".equals(fieldName)) {
+                Argument arg = getArgument(includeIfDirective, "item");
+                if (arg != null && arg.getValue() != null) {
+                    Object argVal = astValueToPojo(arg.getValue());
+                    ItemFilter itemFilter = gson.fromJson(gson.toJson(argVal), ItemFilter.class);
+
+                    if (result instanceof List<?>) {
+                        List<Item> items = ((List<?>) result).stream()
+                                .filter(Item.class::isInstance)
+                                .map(Item.class::cast)
+                                .filter(i -> i.getItemType() != null)
+                                .filter(i -> {
+                                    List<String> allowedTypes = itemFilter.getItemTypeList()
+                                            .stream().map(String::toLowerCase).toList();
+                                    return allowedTypes.contains(i.getItemType().toLowerCase());
+                                })
+                                .collect(Collectors.toList());
+                        result = items;
+                    }
+                }
+            }
+
+            // ============================
+            // FILTER FULFILLMENT
+            // ============================
+            if ("fulfillment".equals(fieldName)) {
+                Argument arg = getArgument(includeIfDirective, "fulfillment");
+                if (arg != null && arg.getValue() != null) {
+                    Object argVal = astValueToPojo(arg.getValue());
+                    FulfillmentFilter fulfillmentFilter =
+                            gson.fromJson(gson.toJson(argVal), FulfillmentFilter.class);
+
+                    if (result instanceof List<?>) {
+                        List<Fulfillment> fulfillments = ((List<?>) result).stream()
+                                .filter(Fulfillment.class::isInstance)
+                                .map(Fulfillment.class::cast)
+                                .filter(f -> f.getFulfillmentType() != null)
+                                .filter(f -> {
+                                    List<String> allowedTypes = fulfillmentFilter.getFulfillmentType()
+                                            .stream().map(String::toLowerCase).toList();
+                                    return allowedTypes.contains(f.getFulfillmentType().toLowerCase());
+                                })
+                                .collect(Collectors.toList());
+                        result = fulfillments;
+                    }
+                }
+            }
+
+            return result;
+        };
+    }
+
+    // ---------------------------------------------------------------------
+    // Utility methods
+    // ---------------------------------------------------------------------
+
+    private Argument getArgument(Directive directive, String name) {
+        return directive.getArguments().stream()
+                .filter(a -> name.equals(a.getName()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    // Same AST -> POJO converter you had before
+    private static Object astValueToPojo(Value<?> astValue) {
+        if (astValue instanceof ObjectValue) {
+            Map<String, Object> map = new HashMap<>();
+            for (ObjectField field : ((ObjectValue) astValue).getObjectFields()) {
+                map.put(field.getName(), astValueToPojo(field.getValue()));
+            }
+            return map;
+        } else if (astValue instanceof ArrayValue) {
+            List<Object> list = new ArrayList<>();
+            for (Value<?> v : ((ArrayValue) astValue).getValues()) {
+                list.add(astValueToPojo(v));
+            }
+            return list;
+        } else if (astValue instanceof StringValue) {
+            return ((StringValue) astValue).getValue();
+        } else if (astValue instanceof IntValue) {
+            return ((IntValue) astValue).getValue();
+        } else if (astValue instanceof BooleanValue) {
+            return ((BooleanValue) astValue).isValue();
+        }
+        return null;
+    }
+}
+
+
+
+
