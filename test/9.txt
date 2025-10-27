@@ -75,5 +75,17 @@ public class GraphQLConfig implements RuntimeWiringConfigurer {
     }
 }
 
+====
 
+@Configuration
+public class GraphQLConfig {
+
+    @Bean
+    public RuntimeWiringConfigurer directiveConfigurer(IncludeIfDirectiveWiring includeIfDirectiveWiring) {
+        return builder -> {
+            log.info("Registering directive: @includeIf");
+            builder.directive("includeIf", includeIfDirectiveWiring);
+        };
+    }
+}
 
