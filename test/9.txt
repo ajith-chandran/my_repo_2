@@ -1,0 +1,79 @@
+@Component
+public class IncludeIfDirectiveWiring implements SchemaDirectiveWiring {
+
+    @Override
+    public GraphQLFieldDefinition onField(SchemaDirectiveWiringEnvironment<GraphQLFieldDefinition> environment) {
+        GraphQLFieldDefinition field = environment.getElement();
+        DataFetcher<?> originalFetcher = environment.getCodeRegistry().getDataFetcher(
+                environment.getFieldsContainer(), field);
+
+        DataFetcher<?> dataFetcher = dataEnv -> {
+            // Get directive arguments
+            Map<String, Object> args = environment.getDirective().getArguments();
+
+            // Access the directive arguments (if any)
+            Object productFilter = args.get("product");
+            Object itemFilter = args.get("item");
+            Object fulfillmentFilter = args.get("fulfillment");
+
+            // Fetch data
+            Object result = originalFetcher.get(dataEnv);
+
+            // Apply your filtering logic here
+            // e.g. filter based on product/item/fulfillment conditions
+            return filterResult(result, productFilter, itemFilter, fulfillmentFilter);
+        };
+
+        // Register the new data fetcher
+        environment.getCodeRegistry().dataFetcher(
+                environment.getFieldsContainer(), field, dataFetcher);
+
+        return field;
+    }
+
+    private Object filterResult(Object result, Object productFilter, Object itemFilter, Object fulfillmentFilter) {
+        // Implement your filtering logic here
+        return result;
+    }
+}
+
+
+//------
+
+
+@Configuration
+public class GraphQLConfig {
+
+    @Bean
+    public RuntimeWiring.Builder runtimeWiringBuilder(IncludeIfDirectiveWiring includeIfDirectiveWiring) {
+        return RuntimeWiring.newRuntimeWiring()
+                .directive("includeIf", includeIfDirectiveWiring);
+    }
+
+    @Bean
+    public GraphQlSourceBuilderCustomizer sourceBuilderCustomizer(RuntimeWiring.Builder runtimeWiringBuilder) {
+        return builder -> builder.configureRuntimeWiring(wiring -> wiring
+                .directive("includeIf", runtimeWiringBuilder.build().getDirectives().get("includeIf"))
+        );
+    }
+}
+
+//-------
+
+@Configuration
+public class GraphQLConfig implements RuntimeWiringConfigurer {
+
+    private final IncludeIfDirectiveWiring includeIfDirectiveWiring;
+
+    public GraphQLConfig(IncludeIfDirectiveWiring includeIfDirectiveWiring) {
+        this.includeIfDirectiveWiring = includeIfDirectiveWiring;
+    }
+
+    @Override
+    public void configure(RuntimeWiring.Builder builder) {
+        builder.directive("includeIf", includeIfDirectiveWiring);
+    }
+}
+
+
+
