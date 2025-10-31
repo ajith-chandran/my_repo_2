@@ -1,0 +1,58 @@
+{
+  "name": "graphql-mesh-demo",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "mesh dev"
+  },
+  "dependencies": {
+    "@graphql-mesh/cli": "^0.97.0",
+    "@graphql-mesh/graphql": "^0.104.0",
+    "@graphql-mesh/runtime": "^0.99.0",
+    "@whatwg-node/fetch": "^0.9.0",
+    "graphql": "^16.8.0"
+  }
+}
+
+
+import { fetch as defaultFetch } from '@whatwg-node/fetch';
+
+const loggingFetch = async (url, options) => {
+  console.log('========================================');
+  console.log('📡 FETCHING FROM:', url);
+  if (options?.body) {
+    try {
+      const parsed = JSON.parse(options.body);
+      console.log('🧠 GRAPHQL REQUEST BODY:\n', JSON.stringify(parsed, null, 2));
+    } catch (err) {
+      console.log('🧠 RAW BODY:', options.body);
+    }
+  }
+  console.log('========================================\n');
+  return defaultFetch(url, options);
+};
+
+/**
+ * Mesh Config Export
+ */
+export default {
+  sources: [
+    {
+      name: 'UsersService',
+      handler: {
+        graphql: {
+          endpoint: 'https://countries.trevorblades.com/', // ✅ sample public GraphQL API
+          customFetch: loggingFetch
+        }
+      }
+    }
+  ]
+};
+
+
+
+
+=====
+
+
+
