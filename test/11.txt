@@ -1,0 +1,119 @@
+simple with one size snd page
+
+sources:
+  - name: UserService
+    handler:
+      graphql:
+        endpoint: http://localhost:4001/graphql
+  - name: OrderService
+    handler:
+      graphql:
+        endpoint: http://localhost:4002/graphql
+
+additionalResolvers:
+  - ./additional-resolvers.js
+
+serve:
+  port: 4000
+  playground: true
+
+
+########
+
+module.exports = {
+  User: {
+    orders: async (user, args, context, info) => {
+      const { page = 1, limit = 20 } = args;
+      const { OrderService } = context.sources;
+
+      // Call the paginated query in OrderService
+      const ordersResponse = await OrderService.Query.orders(
+        { page, limit },
+        context,
+        info
+      );
+
+      const filteredOrders = ordersResponse.nodes.filter(
+        (order) => order.userEmail === user.email
+      );
+
+      return {
+        nodes: filteredOrders,
+        pageInfo: ordersResponse.pageInfo,
+      };
+    },
+  },
+};
+
+
+=========
+
+Expose Pagination in Schema
+
+additionalTypeDefs: |
+  extend type User {
+    orders(page: Int, limit: Int): OrderConnection
+  }
+
+  type OrderConnection {
+    nodes: [Order]
+    pageInfo: PageInfo
+  }
+
+  type PageInfo {
+    hasNextPage: Boolean
+    nextPage: Int
+  }
+
+#######
+
+query {
+  user(email: "abc@example.com") {
+    id
+    name
+    orders(page: 2, limit: 10) {
+      nodes {
+        id
+        product
+        total
+      }
+      pageInfo {
+        hasNextPage
+        nextPage
+      }
+    }
+  }
+}
+
+======
+
+Auto-Paginate (Optional Advanced Pattern)
+
+
+
+
+
+
+
+async function fetchAllOrders(OrderService, context, info, page = 1, limit = 100) {
+  const response = await OrderService.Query.orders({ page, limit }, context, info);
+  const currentOrders = response.nodes;
+  if (response.pageInfo.hasNextPage) {
+    const nextOrders = await fetchAllOrders(OrderService, context, info, response.pageInfo.nextPage, limit);
+    return currentOrders.concat(nextOrders);
+  }
+  return currentOrders;
+}
+
+module.exports = {
+  User: {
+    orders: async (user, args, context, info) => {
+      const { OrderService } = context.sources;
+      const allOrders = await fetchAllOrders(OrderService, context, info);
+      return allOrders.filter(order => order.userEmail === user.email);
+    }
+  }
+};
+
+
+
