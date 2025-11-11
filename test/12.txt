@@ -1,0 +1,63 @@
+module.exports = async (root, args, context, info) => {
+  const { accountNumber } = args;
+
+  // Trigger both service calls in parallel
+  const [userResult, orderResult] = await Promise.all([
+    context.UserService.Query.user({ root, args: { accountNumber }, context, info }),
+    context.OrderService.Query.orders({ root, args: { accountNumber }, context, info })
+  ]);
+
+  // Merge or stitch the results
+  return {
+    ...userResult,
+    orders: orderResult
+  };
+};
+
+
+====
+
+
+
+sources:
+  - name: UserService
+    handler:
+      graphql:
+        endpoint: "http://localhost:4001/graphql"
+
+  - name: OrderService
+    handler:
+      graphql:
+        endpoint: "http://localhost:4002/graphql"
+
+additionalResolvers:
+  - type: Query
+    field: userWithOrders
+    targetSource: UserService
+    requiredSelectionSet: |
+      {
+        accountNumber
+      }
+    sourceName: UserService
+    resolver:
+      require:
+        - ./resolvers/userWithOrders.js
+      import: default
+
+
+
+=====
+
+
+query GetUserAndOrders($accountNumber: String!) {
+  user(accountNumber: $accountNumber) {
+    name
+    email
+    orders {
+      id
+      amount
+    }
+  }
+}
+
+
