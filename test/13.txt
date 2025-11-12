@@ -1,0 +1,45 @@
+type Query {
+  orders(criteria: OrderCriteriaInput!): [Order]
+}
+
+input OrderCriteriaInput {
+  accountNumber: String
+  accountId: ID
+  orderNumber: String
+}
+
+type Order {
+  id: ID!
+  accountNumber: String!
+  item: String
+  price: Float
+}
+
+extend type User @key(fields: "accountNumber") {
+  accountNumber: String! @external
+  orders: [Order]
+}
+
+
+
+@Component
+public class UserEntityResolver {
+
+    // Resolve User entity by federated key
+    @SchemaMapping(typeName = "_Entity")
+    public User resolveUser(Map<String, Object> reference) {
+        if ("User".equals(reference.get("__typename"))) {
+            String accountNumber = (String) reference.get("accountNumber");
+            return new User(accountNumber);
+        }
+        return null;
+    }
+
+    @SchemaMapping(typeName = "User", field = "orders")
+    public List<Order> getOrders(User user) {
+        OrderCriteriaInput criteria = new OrderCriteriaInput();
+        criteria.setAccountNumber(user.getAccountNumber());
+        return orderService.getOrders(criteria);
+    }
+}
+
