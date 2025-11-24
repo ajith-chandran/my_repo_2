@@ -91,24 +91,48 @@ additionalResolvers: []
 ######################################################################
 # FILE: Dockerfile
 ######################################################################
-FROM node:24.2-alpine
+FROM node:24.2-alpine AS builder
 
 WORKDIR /app
 
+# Accept registry credentials from GitHub Actions
+ARG NPM_REGISTRY
+ARG NPM_USERNAME
+ARG NPM_PASSWORD
+ARG NPM_EMAIL
+
+# Create temp .npmrc for JFrog registry auth
+RUN echo "//${NPM_REGISTRY}/:_auth=$(printf \"%s:%s\" \"$NPM_USERNAME\" \"$NPM_PASSWORD\" | base64)" > ~/.npmrc \
+    && echo "@your-scope:registry=https://${NPM_REGISTRY}/" >> ~/.npmrc \
+    && echo "email=$NPM_EMAIL" >> ~/.npmrc \
+    && echo "always-auth=true" >> ~/.npmrc
+
 COPY package*.json ./
+
+# Now npm ci can authenticate to JFrog
 RUN npm ci
+
+# Remove credentials to avoid leaking into final container
+RUN rm ~/.npmrc
 
 COPY . .
 
+RUN npm prune --production
+RUN chmod +x /app/entrypoint.sh
+
+
+# Final runtime image
+FROM node:24.2-alpine
+
+WORKDIR /app
 RUN addgroup -S mesh && adduser -S mesh -G mesh
 USER mesh
 
-RUN chmod +x /app/entrypoint.sh
+COPY --from=builder /app /app
 
 EXPOSE 4000
 
 ENTRYPOINT ["/app/entrypoint.sh"]
-
 
 
 ######################################################################
@@ -293,7 +317,12 @@ jobs:
 
         az acr login --name ${{ vars.ACR_NAME }}
 
-        docker build -t ${{ vars.ACR_NAME }}.azurecr.io/mesh-gateway:$IMAGE_TAG .
+        docker build \
+  --build-arg NPM_REGISTRY=${{ secrets.JFROG_NPM_REGISTRY }} \
+  --build-arg NPM_USERNAME=${{ secrets.JFROG_NPM_USERNAME }} \
+  --build-arg NPM_PASSWORD=${{ secrets.JFROG_NPM_PASSWORD }} \
+  --build-arg NPM_EMAIL=${{ secrets.JFROG_NPM_EMAIL }} \
+  -t ${{ vars.ACR_NAME }}.azurecr.io/mesh-gateway:$IMAGE_TAG .
         docker push ${{ vars.ACR_NAME }}.azurecr.io/mesh-gateway:$IMAGE_TAG
 
     - name: Set AKS context
