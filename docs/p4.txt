@@ -1,0 +1,432 @@
+######################################################################
+# PROJECT DIRECTORY STRUCTURE
+######################################################################
+mesh-gateway/
+├── .nvmrc
+├── .npmrc
+├── mesh.yaml
+├── package.json
+├── Dockerfile
+├── entrypoint.sh
+├── .dockerignore
+├── k8s/
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── ingress.yaml
+│   └── hpa.yaml
+└── .github/
+    └── workflows/
+        ├── deploy-dev.yml
+        ├── deploy-stage.yml
+        └── deploy-prod.yml
+
+
+
+######################################################################
+# FILE: .nvmrc
+######################################################################
+24.2
+
+
+
+######################################################################
+# FILE: .npmrc
+######################################################################
+save-exact=true
+
+
+
+######################################################################
+# FILE: mesh.yaml
+######################################################################
+sources:
+  - name: customer
+    handler:
+      graphql:
+        endpoint: ${CUSTOMER_SERVICE_URL}
+        headers:
+          Authorization: "Bearer ${CUSTOMER_SERVICE_TOKEN}"
+          cookie: "${CUSTOMER_SERVICE_COOKIE}"
+
+  - name: orders
+    handler:
+      graphql:
+        endpoint: ${ORDER_SERVICE_URL}
+        headers:
+          Authorization: "Bearer ${ORDER_SERVICE_TOKEN}"
+          x-att-client: "${ORDER_SERVICE_XATTCLIENT}"
+
+serve:
+  playground: true
+additionalResolvers: []
+
+
+
+######################################################################
+# FILE: package.json
+######################################################################
+{
+  "name": "mesh-gateway",
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": "24.2"
+  },
+  "scripts": {
+    "mesh:build": "graphql-mesh build",
+    "mesh:serve": "graphql-mesh serve"
+  },
+  "dependencies": {
+    "@graphql-mesh/cli": "0.95.0",
+    "@graphql-mesh/http": "0.3.10",
+    "@graphql-mesh/runtime": "0.93.0",
+    "@graphql-mesh/graphql": "0.95.0",
+    "@graphql-mesh/rest": "0.94.0",
+    "axios": "1.5.0"
+  }
+}
+
+
+
+######################################################################
+# FILE: Dockerfile
+######################################################################
+FROM node:24.2-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY . .
+
+RUN addgroup -S mesh && adduser -S mesh -G mesh
+USER mesh
+
+RUN chmod +x /app/entrypoint.sh
+
+EXPOSE 4000
+
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+
+
+######################################################################
+# FILE: entrypoint.sh
+######################################################################
+#!/bin/sh
+set -e
+
+echo "🔧 Running Mesh Build using environment-specific subgraphs..."
+npm run mesh:build
+
+echo "🚀 Starting Mesh Gateway..."
+npm run mesh:serve
+
+
+
+######################################################################
+# FILE: .dockerignore
+######################################################################
+node_modules
+npm-debug.log
+.git
+.github
+Dockerfile
+.env
+.mesh
+
+
+
+######################################################################
+# FILE: k8s/deployment.yaml
+######################################################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mesh-gateway
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mesh-gateway
+  template:
+    metadata:
+      labels:
+        app: mesh-gateway
+    spec:
+      containers:
+      - name: mesh-gateway
+        image: IMAGE_REPLACE_AT_CI
+        env:
+        - name: CUSTOMER_SERVICE_URL
+          valueFrom:
+            secretKeyRef:
+              name: mesh-env
+              key: CUSTOMER_SERVICE_URL
+
+        - name: ORDER_SERVICE_URL
+          valueFrom:
+            secretKeyRef:
+              name: mesh-env
+              key: ORDER_SERVICE_URL
+
+        - name: CUSTOMER_SERVICE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: mesh-env
+              key: CUSTOMER_SERVICE_TOKEN
+
+        - name: ORDER_SERVICE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: mesh-env
+              key: ORDER_SERVICE_TOKEN
+
+        - name: CUSTOMER_SERVICE_COOKIE
+          valueFrom:
+            secretKeyRef:
+              name: mesh-env
+              key: CUSTOMER_SERVICE_COOKIE
+
+        - name: ORDER_SERVICE_XATTCLIENT
+          valueFrom:
+            secretKeyRef:
+              name: mesh-env
+              key: ORDER_SERVICE_XATTCLIENT
+
+        ports:
+        - containerPort: 4000
+
+
+
+######################################################################
+# FILE: k8s/service.yaml
+######################################################################
+apiVersion: v1
+kind: Service
+metadata:
+  name: mesh-gateway
+spec:
+  type: ClusterIP
+  selector:
+    app: mesh-gateway
+  ports:
+    - port: 80
+      targetPort: 4000
+
+
+
+######################################################################
+# FILE: k8s/ingress.yaml
+######################################################################
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mesh-gateway-ingress
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: mesh.company.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mesh-gateway
+                port:
+                  number: 80
+
+
+
+######################################################################
+# FILE: k8s/hpa.yaml
+######################################################################
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: mesh-gateway-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: mesh-gateway
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 60
+
+
+
+######################################################################
+# FILE: .github/workflows/deploy-dev.yml
+######################################################################
+name: Deploy to Dev (AKS)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-dev:
+    name: Deploy to Dev Environment
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Build and Push Image to ACR
+      run: |
+        IMAGE_TAG=$(date +%s)
+        echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
+        az acr login --name ${{ vars.ACR_NAME }}
+
+        docker build -t ${{ vars.ACR_NAME }}.azurecr.io/mesh-gateway:$IMAGE_TAG .
+        docker push ${{ vars.ACR_NAME }}.azurecr.io/mesh-gateway:$IMAGE_TAG
+
+    - name: Set AKS context
+      uses: azure/aks-set-context@v3
+      with:
+        resource-group: ${{ vars.AKS_RG }}
+        cluster-name: ${{ vars.AKS_CLUSTER }}
+
+    - name: Create mesh-env secret
+      run: |
+        kubectl delete secret mesh-env -n ${{ vars.K8S_NAMESPACE }} --ignore-not-found
+
+        kubectl create secret generic mesh-env \
+          --from-literal=CUSTOMER_SERVICE_URL="${{ vars.CUSTOMER_SERVICE_URL }}" \
+          --from-literal=ORDER_SERVICE_URL="${{ vars.ORDER_SERVICE_URL }}" \
+          --from-literal=CUSTOMER_SERVICE_TOKEN="${{ secrets.CUSTOMER_SERVICE_TOKEN }}" \
+          --from-literal=ORDER_SERVICE_TOKEN="${{ secrets.ORDER_SERVICE_TOKEN }}" \
+          --from-literal=CUSTOMER_SERVICE_COOKIE="${{ secrets.CUSTOMER_SERVICE_COOKIE }}" \
+          --from-literal=ORDER_SERVICE_XATTCLIENT="${{ secrets.ORDER_SERVICE_XATTCLIENT }}" \
+          -n ${{ vars.K8S_NAMESPACE }}
+
+    - name: Deploy to Dev
+      run: |
+        sed "s|IMAGE_REPLACE_AT_CI|${{ vars.ACR_NAME }}.azurecr.io/mesh-gateway:${{ env.IMAGE_TAG }}|" \
+          k8s/deployment.yaml | kubectl apply -n ${{ vars.K8S_NAMESPACE }} -f -
+
+        kubectl apply -f k8s/service.yaml -n ${{ vars.K8S_NAMESPACE }}
+        kubectl apply -f k8s/ingress.yaml -n ${{ vars.K8S_NAMESPACE }}
+
+        kubectl rollout status deployment/mesh-gateway -n ${{ vars.K8S_NAMESPACE }}
+
+
+
+######################################################################
+# FILE: .github/workflows/deploy-stage.yml
+######################################################################
+name: Deploy to Stage (AKS)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-stage:
+    name: Deploy to Stage Environment
+    runs-on: ubuntu-latest
+    environment: stage
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Set AKS context (Stage)
+      uses: azure/aks-set-context@v3
+      with:
+        resource-group: ${{ vars.AKS_RG }}
+        cluster-name: ${{ vars.AKS_CLUSTER }}
+
+    - name: Create mesh-env secret
+      run: |
+        kubectl delete secret mesh-env -n ${{ vars.K8S_NAMESPACE }} --ignore-not-found
+
+        kubectl create secret generic mesh-env \
+          --from-literal=CUSTOMER_SERVICE_URL="${{ vars.CUSTOMER_SERVICE_URL }}" \
+          --from-literal=ORDER_SERVICE_URL="${{ vars.ORDER_SERVICE_URL }}" \
+          --from-literal=CUSTOMER_SERVICE_TOKEN="${{ secrets.CUSTOMER_SERVICE_TOKEN }}" \
+          --from-literal=ORDER_SERVICE_TOKEN="${{ secrets.ORDER_SERVICE_TOKEN }}" \
+          --from-literal=CUSTOMER_SERVICE_COOKIE="${{ secrets.CUSTOMER_SERVICE_COOKIE }}" \
+          --from-literal=ORDER_SERVICE_XATTCLIENT="${{ secrets.ORDER_SERVICE_XATTCLIENT }}" \
+          -n ${{ vars.K8S_NAMESPACE }}
+
+    - name: Deploy to Stage
+      run: |
+        sed "s|IMAGE_REPLACE_AT_CI|${{ vars.ACR_NAME }}.azurecr.io/mesh-gateway:${{ vars.IMAGE_TAG }}|" \
+          k8s/deployment.yaml | kubectl apply -n ${{ vars.K8S_NAMESPACE }} -f -
+
+        kubectl apply -f k8s/service.yaml -n ${{ vars.K8S_NAMESPACE }}
+        kubectl apply -f k8s/ingress.yaml -n ${{ vars.K8S_NAMESPACE }}
+
+        kubectl rollout status deployment/mesh-gateway -n ${{ vars.K8S_NAMESPACE }}
+
+
+
+######################################################################
+# FILE: .github/workflows/deploy-prod.yml
+######################################################################
+name: Deploy to Production (AKS)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-prod:
+    name: Deploy to Prod Environment
+    runs-on: ubuntu-latest
+    environment: prod
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Set AKS context (Prod)
+      uses: azure/aks-set-context@v3
+      with:
+        resource-group: ${{ vars.AKS_RG }}
+        cluster-name: ${{ vars.AKS_CLUSTER }}
+
+    - name: Create mesh-env secret
+      run: |
+        kubectl delete secret mesh-env -n ${{ vars.K8S_NAMESPACE }} --ignore-not-found
+
+        kubectl create secret generic mesh-env \
+          --from-literal=CUSTOMER_SERVICE_URL="${{ vars.CUSTOMER_SERVICE_URL }}" \
+          --from-literal=ORDER_SERVICE_URL="${{ vars.ORDER_SERVICE_URL }}" \
+          --from-literal=CUSTOMER_SERVICE_TOKEN="${{ secrets.CUSTOMER_SERVICE_TOKEN }}" \
+          --from-literal=ORDER_SERVICE_TOKEN="${{ secrets.ORDER_SERVICE_TOKEN }}" \
+          --from-literal=CUSTOMER_SERVICE_COOKIE="${{ secrets.CUSTOMER_SERVICE_COOKIE }}" \
+          --from-literal=ORDER_SERVICE_XATTCLIENT="${{ secrets.ORDER_SERVICE_XATTCLIENT }}" \
+          -n ${{ vars.K8S_NAMESPACE }}
+
+    - name: Deploy to Prod
+      run: |
+        sed "s|IMAGE_REPLACE_AT_CI|${{ vars.ACR_NAME }}.azurecr.io/mesh-gateway:${{ vars.IMAGE_TAG }}|" \
+          k8s/deployment.yaml | kubectl apply -n ${{ vars.K8S_NAMESPACE }} -f -
+
+        kubectl apply -f k8s/service.yaml -n ${{ vars.K8S_NAMESPACE }}
+        kubectl apply -f k8s/ingress.yaml -n ${{ vars.K8S_NAMESPACE }}
+
+        kubectl rollout status deployment/mesh-gateway -n ${{ vars.K8S_NAMESPACE }}
