@@ -1,3 +1,25 @@
+mesh-gateway/
+├── .nvmrc
+├── .npmrc
+├── mesh.yaml
+├── package.json
+├── Dockerfile
+├── entrypoint.sh
+├── .dockerignore
+├── k8s/
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── ingress.yaml
+│   └── hpa.yaml
+└── .github/
+    └── workflows/
+        ├── deploy-dev.yml
+        ├── deploy-stage.yml
+        └── deploy-prod.yml
+
+
+
+
 ######################################################################
 # FILE: .nvmrc
 ######################################################################
