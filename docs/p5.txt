@@ -1,0 +1,33 @@
+// add-default-keys.js
+// Automatically add @key(fields: "id") to any type with an id field
+
+module.exports = function AutoFederationKeysTransform() {
+  return {
+    onSchemaChange({ schema }) {
+      const { mapSchema, MapperKind } = require('@graphql-tools/utils');
+
+      return mapSchema(schema, {
+        [MapperKind.OBJECT_TYPE]: (type) => {
+          const fields = type.getFields?.();
+          if (!fields) return type;
+
+          // If type has an "id" field, add federation metadata
+          if (fields.id) {
+            type.extensions = {
+              ...type.extensions,
+              federation: {
+                ...type.extensions?.federation,
+                keys: [
+                  ...(type.extensions?.federation?.keys || []),
+                  { fields: 'id' }
+                ]
+              }
+            };
+          }
+
+          return type;
+        }
+      });
+    }
+  };
+};
