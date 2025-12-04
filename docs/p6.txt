@@ -1,0 +1,54 @@
+// add-default-keys.js
+// Safely add @key(fields: "id") to any object type that:
+// 1. Has an "id" or "ID" field
+// 2. Does NOT already have federation keys defined
+
+module.exports = function AutoFederationKeysTransform() {
+  return {
+    onSchemaChange({ schema }) {
+      const { mapSchema, MapperKind } = require('@graphql-tools/utils');
+
+      return mapSchema(schema, {
+        [MapperKind.OBJECT_TYPE]: (type) => {
+          // Skip root types (Query, Mutation, Subscription)
+          const typeName = type.name;
+          if (['Query', 'Mutation', 'Subscription'].includes(typeName)) {
+            return type;
+          }
+
+          const fields = type.getFields?.();
+          if (!fields) return type;
+
+          // Check if "id" field exists AND is ID or ID!
+          const hasIdField =
+            fields.id &&
+            (fields.id.type.toString() === 'ID' || fields.id.type.toString() === 'ID!');
+
+          if (!hasIdField) {
+            // No id field → cannot auto-federate
+            return type;
+          }
+
+          // Federation metadata that may already exist
+          const existingFederation = type.extensions?.federation || {};
+
+          // If keys already exist, DO NOT modify
+          if (existingFederation.keys && existingFederation.keys.length > 0) {
+            return type;
+          }
+
+          // Add new federation metadata
+          return Object.assign(type, {
+            extensions: {
+              ...type.extensions,
+              federation: {
+                ...existingFederation,
+                keys: [{ fields: 'id' }]
+              }
+            }
+          });
+        }
+      });
+    }
+  };
+};
